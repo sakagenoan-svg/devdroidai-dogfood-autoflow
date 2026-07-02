@@ -1,0 +1,154 @@
+name: DevDroid AI Debug Build
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*') }}
+
+      - name: Verify and setup Gradle
+        id: verify
+        run: |
+          # Gradle プロジェクトかどうか判定 (build.gradle* の存在で確認)
+          GRADLE_FILE=$(find . -maxdepth 2 -name "build.gradle*" | head -1)
+          if [ -z "$GRADLE_FILE" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "::warning::build.gradle が見つかりません。Gradle プロジェクトではないためビルドをスキップします。"
+            exit 0
+          fi
+          echo "skip=false" >> $GITHUB_OUTPUT
+          echo "Found: $GRADLE_FILE"
+
+          # gradlew がある場合はそのまま使う
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            exit 0
+          fi
+
+          # gradle-wrapper.properties がある場合はそのバージョンで生成
+          PROPS=$(find . -name "gradle-wrapper.properties" -path "*/gradle/wrapper/*" | head -1)
+          if [ -n "$PROPS" ]; then
+            GRADLE_VER=$(grep distributionUrl "$PROPS" | sed 's|.*gradle-||;s|-.*||')
+            echo "Generating wrapper from properties (Gradle $GRADLE_VER)..."
+            curl -sL "https://services.gradle.org/distributions/gradle-${GRADLE_VER}-bin.zip" -o /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d /tmp
+            /tmp/gradle-${GRADLE_VER}/bin/gradle wrapper
+            chmod +x gradlew
+            exit 0
+          fi
+
+          # どちらもない場合は安定版の Gradle で wrapper を生成
+          echo "gradlew も properties も見つかりません。Gradle 8.10 で wrapper を生成します..."
+          curl -sL "https://services.gradle.org/distributions/gradle-8.10-bin.zip" -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+          /tmp/gradle-8.10/bin/gradle wrapper
+          chmod +x gradlew
+
+      - name: Build Debug APK
+        id: build
+        if: steps.verify.outputs.skip != 'true'
+        run: ./gradlew assembleDebug
+
+      - name: Find APK
+        id: find_apk
+        if: steps.build.outcome == 'success'
+        run: |
+          APK_PATH=$(find . -name "*.apk" -path "*/debug/*" | head -1)
+          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+          echo "Found APK: $APK_PATH"
+
+      # Firebase 配布 (secrets が設定されている場合のみ)
+      - name: Upload to Firebase App Distribution
+        id: distribute
+        if: success() && steps.find_apk.outputs.apk_path != ''
+        continue-on-error: true
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        env:
+          FIREBASE_APP_ID_CHECK: ${{ secrets.FIREBASE_APP_ID }}
+        with:
+          appId: ${{ secrets.FIREBASE_APP_ID }}
+          token: ${{ secrets.FIREBASE_TOKEN }}
+          groups: testers
+          file: ${{ steps.find_apk.outputs.apk_path }}
+          releaseNotes: "自動ビルド - ${{ github.sha }}"
+
+      # GitHub Releases に APK を公開 (push / PR どちらでもテスト用に公開)
+      - name: Create Release with APK
+        id: release
+        if: success() && steps.find_apk.outputs.apk_path != ''
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "${{ github.event_name == 'pull_request' && format('PR #{0} Test Build', github.event.pull_request.number) || format('Debug Build #{0}', github.run_number) }}"
+          body: "${{ github.event_name == 'pull_request' && format('PR #{0}: {1}', github.event.pull_request.number, github.event.pull_request.title) || format('自動ビルド ({0})', github.sha) }}"
+          files: ${{ steps.find_apk.outputs.apk_path }}
+          prerelease: ${{ github.event_name == 'pull_request' }}
+          make_latest: ${{ github.event_name != 'pull_request' }}
+
+      # 古い Release を自動削除 (最新5件のみ保持)
+      # 今回作成した Release (tag_name) を確実に除外してから古いものを削除
+      - name: Cleanup old releases
+        if: success() && steps.release.outcome == 'success'
+        run: |
+          CURRENT_TAG="build-${{ github.run_number }}"
+          curl -sS -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100" \
+            | jq -r --arg tag "$CURRENT_TAG" '.[] | select(.tag_name != $tag) | .id' \
+            | tail -n +5 \
+            | while read ID; do
+                echo "Deleting release $ID..."
+                curl -sS -X DELETE -H "Authorization: token ${{ github.token }}" \
+                  "https://api.github.com/repos/${{ github.repository }}/releases/$ID"
+              done
+        continue-on-error: true
+
+      # DevDroid Worker にビルド結果を通知 (成功・失敗・スキップ)
+      - name: Notify DevDroid Worker
+        if: always() && steps.verify.outputs.skip != 'true'
+        run: |
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            CONCLUSION="success"
+            FIREBASE_URL="${{ steps.distribute.outputs.TESTING_URI }}"
+            RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/build-${{ github.run_number }}"
+            INSTALL_URL="${FIREBASE_URL:-$RELEASE_URL}"
+          else
+            CONCLUSION="failure"
+            INSTALL_URL=""
+          fi
+          PR_NUM="${{ github.event.pull_request.number || 0 }}"
+          BRANCH="${{ github.head_ref || '' }}"
+          curl -sS -X POST "https://devdroidai.love-riko1.workers.dev/build-result" \
+            -H "Content-Type: application/json" \
+            -H "X-Build-Secret: ${{ secrets.DEVDROID_BUILD_SECRET }}" \
+            -d "{\"repo\": \"dogfood-autoflow\", \"runId\": ${{ github.run_id }}, \"conclusion\": \"$CONCLUSION\", \"installUrl\": \"$INSTALL_URL\", \"prNumber\": $PR_NUM, \"branch\": \"$BRANCH\"}" || true

@@ -1,0 +1,41 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Claude Code local settings
+.claude/
+
+# Signing / keystores
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+release.keystore
+debug.keystore
+/app/*.jks
+/app/*.keystore
+
+# Secrets / credentials / env
+*.env
+.env
+.env.*
+secrets.properties
+api_keys.properties
+google-services.json
+firebase-adminsdk*.json
+*-service-account.json
+*.pem
+*.p12
+*.pfx

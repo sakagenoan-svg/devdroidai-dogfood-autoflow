@@ -32,6 +32,7 @@ class Registry private constructor(
         fun default(): Registry = Builder()
             .trigger("event_type") { args -> EventTypeTrigger(args.getValue("type")) }
             .trigger("payload_equals") { args -> PayloadEqualsTrigger(args.getValue("key"), args.getValue("value")) }
+            .trigger("time_window") { args -> TimeWindowTrigger(args.getValue("start"), args.getValue("end")) }
             .action("set_state") { args -> SetState(args.getValue("key"), args.getValue("value")) }
             .action("notify") { args -> Notify(args.getValue("message")) }
             .build()

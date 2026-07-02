@@ -24,6 +24,19 @@ data class PayloadEqualsTrigger(val key: String, val value: String) : Trigger {
     override fun matches(event: Event): Boolean = event.payload[key] == value
 }
 
+data class TimeWindowTrigger(val startTime: String, val endTime: String) : Trigger {
+    override fun matches(event: Event): Boolean {
+        val calendar = java.util.Calendar.getInstance()
+        calendar.timeInMillis = event.timestampMs
+        val currentTime = String.format(
+            "%02d:%02d",
+            calendar.get(java.util.Calendar.HOUR_OF_DAY),
+            calendar.get(java.util.Calendar.MINUTE)
+        )
+        return currentTime >= startTime && currentTime <= endTime
+    }
+}
+
 /** Conditions form a boolean tree evaluated against an [EvalContext]. */
 sealed interface Condition {
     fun evaluate(ctx: EvalContext): Boolean

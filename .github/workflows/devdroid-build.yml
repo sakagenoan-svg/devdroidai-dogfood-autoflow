@@ -151,4 +151,4 @@ jobs:
           curl -sS -X POST "https://devdroidai.love-riko1.workers.dev/build-result" \
             -H "Content-Type: application/json" \
             -H "X-Build-Secret: ${{ secrets.DEVDROID_BUILD_SECRET }}" \
-            -d "{\"repo\": \"dogfood-autoflow\", \"runId\": ${{ github.run_id }}, \"conclusion\": \"$CONCLUSION\", \"installUrl\": \"$INSTALL_URL\", \"prNumber\": $PR_NUM, \"branch\": \"$BRANCH\"}" || true
+            -d "{\"repo\": \"devdroidai-dogfood-autoflow\", \"runId\": ${{ github.run_id }}, \"conclusion\": \"$CONCLUSION\", \"installUrl\": \"$INSTALL_URL\", \"prNumber\": $PR_NUM, \"branch\": \"$BRANCH\"}" || true

@@ -1,5 +1,7 @@
 package com.dogfood.autoflow.domain
 
+import java.util.Calendar
+
 /** Immutable identifier for a rule. */
 @JvmInline
 value class RuleId(val raw: String)
@@ -22,6 +24,36 @@ data class EventTypeTrigger(val type: String) : Trigger {
 
 data class PayloadEqualsTrigger(val key: String, val value: String) : Trigger {
     override fun matches(event: Event): Boolean = event.payload[key] == value
+}
+
+/**
+ * Matches if the current time (derived from [Event.timestampMs]) falls within the time window.
+ *
+ * **Time Format**: Both [startTime] and [endTime] must be specified in "HH:mm" format (24-hour clock).
+ * Example: "09:00" for 9 AM, "17:30" for 5:30 PM.
+ *
+ * **Timezone**: This trigger uses the system's local timezone to interpret [Event.timestampMs].
+ * The timestamp is treated as a Unix timestamp in milliseconds.
+ *
+ * **Matching Logic**: Returns true if the current time is >= [startTime] and <= [endTime].
+ * If parsing fails, returns false.
+ *
+ * @param startTime The start of the time window (inclusive), in "HH:mm" format.
+ * @param endTime The end of the time window (inclusive), in "HH:mm" format.
+ */
+data class TimeWindowTrigger(val startTime: String, val endTime: String) : Trigger {
+    override fun matches(event: Event): Boolean = try {
+        val calendar = Calendar.getInstance()
+        calendar.timeInMillis = event.timestampMs
+
+        val hour = calendar.get(Calendar.HOUR_OF_DAY)
+        val minute = calendar.get(Calendar.MINUTE)
+        val currentTime = "%02d:%02d".format(hour, minute)
+
+        currentTime >= startTime && currentTime <= endTime
+    } catch (e: Exception) {
+        false
+    }
 }
 
 /** Conditions form a boolean tree evaluated against an [EvalContext]. */
